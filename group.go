@@ -5,6 +5,8 @@
 package routing
 
 import (
+	"github.com/acsellers/inflections"
+	"reflect"
 	"strings"
 )
 
@@ -76,6 +78,39 @@ func (r *RouteGroup) Any(path string, handlers ...Handler) *Route {
 		route.add(method, handlers)
 	}
 	return route
+}
+
+// RegisterController Registers a controller (i.e. struct) with functions
+// of the type: 'func(*routing.Context) error' and skips all other functions
+func (r *RouteGroup) RegisterController(controller interface{}) {
+	t := reflect.TypeOf(controller)
+	for i := 0; i < t.NumMethod(); i++ {
+		method := t.Method(i)
+		// Check for func(*routing.Context) error
+		if method.Type.NumOut() == 1 && method.Type.Out(0).Name() == "error" &&
+			method.Type.NumIn() == 2 && method.Type.In(1).String() == "*routing.Context" {
+			uri := "/" + inflections.Underscore(t.Name())
+			uri += "/" + inflections.Underscore(method.Name)
+			mt, found := t.MethodByName(method.Name + "Params")
+			if found {
+				r := mt.Func.Call([]reflect.Value{reflect.ValueOf(controller)})
+				if len(r) == 1 {
+					uri += "/" + r[1].Interface().(string)
+				}
+			}
+			r.Any(uri, func(ctx *Context) error {
+				var params []reflect.Value
+				params = append(params, reflect.ValueOf(controller))
+				params = append(params, reflect.ValueOf(ctx))
+				errVal := method.Func.Call(params)
+				i := errVal[0].Interface()
+				if i != nil {
+					return i.(error)
+				}
+				return nil
+			})
+		}
+	}
 }
 
 // To adds a route to the router with the given HTTP methods, route path, and handlers.
